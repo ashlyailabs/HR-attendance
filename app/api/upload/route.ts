@@ -1,0 +1,37 @@
+import { NextRequest, NextResponse } from "next/server";
+import { appendRecords, fetchExistingKeys } from "@/lib/googleSheets";
+import { processAttendanceFromBuffer } from "@/lib/processAttendance";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file");
+    if (!file || !(file instanceof Blob)) {
+      return NextResponse.json(
+        { error: "Missing file field (multipart form key: file)" },
+        { status: 400 }
+      );
+    }
+    const name = "name" in file ? String(file.name) : "";
+    if (!name.toLowerCase().endsWith(".xlsx")) {
+      return NextResponse.json(
+        { error: "Only .xlsx files are supported" },
+        { status: 400 }
+      );
+    }
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const records = processAttendanceFromBuffer(buffer);
+    const existing = await fetchExistingKeys();
+    const result = await appendRecords(records, existing);
+    return NextResponse.json({
+      inserted: result.inserted,
+      skipped: result.skipped,
+      records: result.records,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
