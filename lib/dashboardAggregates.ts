@@ -24,14 +24,16 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
 
   const avgDailyHours =
     n > 0 ? sorted.reduce((s, r) => s + r.totalHours, 0) / n : 0;
-  const latePercent =
-    n > 0 ? (sorted.filter((r) => r.isLate).length / n) * 100 : 0;
+  const lateArrivalsCount = sorted.filter((r) => r.isLate).length;
+  const latePercent = n > 0 ? (lateArrivalsCount / n) * 100 : 0;
   const overtimeRecordsCount = sorted.filter((r) => r.isOvertime).length;
   const earlyExitsCount = sorted.filter((r) => r.isEarlyExit).length;
 
   const dateRangeLabel =
     minD && maxD
-      ? `${isoDateToDDMMYYYY(minD)} — ${isoDateToDDMMYYYY(maxD)} · ${uniqEmp.size} employees`
+      ? minD === maxD
+        ? `${isoDateToDDMMYYYY(minD)} · ${uniqEmp.size} employees`
+        : `${isoDateToDDMMYYYY(minD)} — ${isoDateToDDMMYYYY(maxD)} · ${uniqEmp.size} employees`
       : "No data yet · 0 employees";
 
   const byDay = new Map<string, AttendanceRecord[]>();
@@ -55,6 +57,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
         avgHours,
         lateCount: list.filter((x) => x.isLate).length,
         overtimeCount: list.filter((x) => x.isOvertime).length,
+        earlyExitCount: list.filter((x) => x.isEarlyExit).length,
       };
     });
 
@@ -118,6 +121,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
     dateRangeLabel,
     totalEmployees: uniqEmp.size,
     avgDailyHours,
+    lateArrivalsCount,
     latePercent,
     overtimeRecordsCount,
     earlyExitsCount,

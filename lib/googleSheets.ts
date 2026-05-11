@@ -1,5 +1,6 @@
 import { google, sheets_v4 } from "googleapis";
 import type { AttendanceRecord } from "@/types";
+import { getSheetIdForCompany } from "@/lib/companies";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
@@ -32,10 +33,9 @@ function getPrivateKey(): string {
 function getSheetsClient(): sheets_v4.Sheets {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = getPrivateKey();
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  if (!clientEmail || !privateKey || !sheetId) {
+  if (!clientEmail || !privateKey) {
     throw new Error(
-      "Missing Google Sheets env: GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SHEET_ID"
+      "Missing Google Sheets env: GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY"
     );
   }
   const auth = new google.auth.JWT({
@@ -46,10 +46,9 @@ function getSheetsClient(): sheets_v4.Sheets {
   return google.sheets({ version: "v4", auth });
 }
 
-export function getSpreadsheetId(): string {
-  const id = process.env.GOOGLE_SHEET_ID;
-  if (!id) throw new Error("GOOGLE_SHEET_ID is not set");
-  return id;
+/** Resolve the spreadsheet ID for the given company. */
+export function getSpreadsheetId(companyId: string): string {
+  return getSheetIdForCompany(companyId);
 }
 
 function recordToRow(r: AttendanceRecord): (string | number | boolean)[] {
@@ -129,9 +128,9 @@ function rowToRecord(row: string[]): AttendanceRecord | null {
 }
 
 /** Ensure row 1 has full header set; extends older 14-column sheets to 16 columns. */
-export async function ensureHeaderRow(): Promise<void> {
+export async function ensureHeaderRow(companyId: string): Promise<void> {
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = getSpreadsheetId(companyId);
   const range = "Sheet1!A1:P1";
   const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = res.data.values;
@@ -155,10 +154,10 @@ export async function ensureHeaderRow(): Promise<void> {
 }
 
 /** Read existing keys set "employeeId|date" (from row 2+). */
-export async function fetchExistingKeys(): Promise<Set<string>> {
-  await ensureHeaderRow();
+export async function fetchExistingKeys(companyId: string): Promise<Set<string>> {
+  await ensureHeaderRow(companyId);
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = getSpreadsheetId(companyId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: "Sheet1!A2:P",
@@ -173,13 +172,14 @@ export async function fetchExistingKeys(): Promise<Set<string>> {
 }
 
 export async function appendRecords(
+  companyId: string,
   records: AttendanceRecord[],
   existingKeys: Set<string>
 ): Promise<{ inserted: number; skipped: number; records: AttendanceRecord[] }> {
   if (records.length === 0) {
     return { inserted: 0, skipped: 0, records: [] };
   }
-  await ensureHeaderRow();
+  await ensureHeaderRow(companyId);
   const toAppend: AttendanceRecord[] = [];
   let skipped = 0;
   for (const r of records) {
@@ -195,7 +195,7 @@ export async function appendRecords(
     return { inserted: 0, skipped, records: [] };
   }
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = getSpreadsheetId(companyId);
   const body = toAppend.map(recordToRow);
   await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -207,10 +207,10 @@ export async function appendRecords(
   return { inserted: toAppend.length, skipped, records: toAppend };
 }
 
-export async function readAllRecords(): Promise<AttendanceRecord[]> {
-  await ensureHeaderRow();
+export async function readAllRecords(companyId: string): Promise<AttendanceRecord[]> {
+  await ensureHeaderRow(companyId);
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = getSpreadsheetId(companyId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: "Sheet1!A2:P",
@@ -225,10 +225,10 @@ export async function readAllRecords(): Promise<AttendanceRecord[]> {
 }
 
 /** Clears all data rows on `Sheet1` (from row 2); leaves row 1 headers untouched. Returns count of non-empty data rows that were cleared. */
-export async function clearAllDataRowsAfterHeader(): Promise<number> {
-  await ensureHeaderRow();
+export async function clearAllDataRowsAfterHeader(companyId: string): Promise<number> {
+  await ensureHeaderRow(companyId);
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = getSpreadsheetId(companyId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: "Sheet1!A2:P",

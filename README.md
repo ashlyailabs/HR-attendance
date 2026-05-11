@@ -39,7 +39,16 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...(same line, use \n where
 
 ---
 
-## 3. Google Sheet, sharing, and `GOOGLE_SHEET_ID`
+## 3. Google Sheets, sharing, and per-company Sheet IDs
+
+The dashboard tracks **two companies** (configured in `lib/companies.ts`):
+
+| Company | Env variable |
+|---|---|
+| Ashly Furniture Industries | `GOOGLE_SHEET_ID_INDUSTRIES` |
+| Ashly Furnishing Co Pvt Ltd | `GOOGLE_SHEET_ID_PVT_LTD` |
+
+For **each** company:
 
 1. Create a **blank** Google Sheet (or use an empty first tab).
 2. The app expects a tab named **`Sheet1`** (the default). Do not rename or delete it unless you change the code ranges.
@@ -47,21 +56,24 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...(same line, use \n where
 
    `https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`
 
-4. Set `GOOGLE_SHEET_ID=<SHEET_ID>` in `.env.local`.
-5. **Share** the spreadsheet with the service account email (`GOOGLE_SERVICE_ACCOUNT_EMAIL`) with **Editor** access.
+4. Set the corresponding env variable in `.env.local` (e.g. `GOOGLE_SHEET_ID_INDUSTRIES=<SHEET_ID>`).
+5. **Share** each spreadsheet with the service account email (`GOOGLE_SERVICE_ACCOUNT_EMAIL`) with **Editor** access.
 
-On first upload or data load, the app writes the header row on row 1 if the sheet is empty.
+On first upload or data load for a company, the app writes the header row on row 1 if that sheet is empty.
 
 ---
 
 ## 4. Create `.env.local` in the project root
 
-In the same folder as `package.json`, create `.env.local` with exactly these three variables filled in:
+In the same folder as `package.json`, create `.env.local` with these variables filled in:
 
 ```env
 GOOGLE_SERVICE_ACCOUNT_EMAIL=
 GOOGLE_PRIVATE_KEY=
-GOOGLE_SHEET_ID=
+
+# One Google Sheet ID per company.
+GOOGLE_SHEET_ID_INDUSTRIES=
+GOOGLE_SHEET_ID_PVT_LTD=
 ```
 
 You can copy `.env.example` as a starting point (`cp .env.example .env.local`).
@@ -102,10 +114,13 @@ The dashboard and API calls (`/api/upload`, `/api/data`) use relative URLs, so t
 
 ## API
 
+All routes require a `companyId` query parameter (`industries` or `pvt_ltd`) — see `lib/companies.ts`.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/upload` | `multipart/form-data` field `file` (`.xlsx`). Parses, dedupes, appends to Sheet. Response: `{ inserted, skipped, records }`. |
-| `GET` | `/api/data` | Reads the Sheet, returns full `DashboardData` JSON. |
+| `POST` | `/api/upload?companyId=<id>` | `multipart/form-data` field `file` (`.xlsx`). Parses, dedupes, appends to the company's Sheet. Response: `{ inserted, skipped, records }`. |
+| `GET` | `/api/data?companyId=<id>` | Reads the company's Sheet, returns full `DashboardData` JSON. |
+| `DELETE` | `/api/reset?companyId=<id>` | Clears all data rows (keeps row 1 header) for the company. |
 
 ---
 
@@ -121,10 +136,12 @@ app/
 components/
   UploadModal.tsx
   KPICards.tsx
-  Charts.tsx
+  AttendanceOverviewChart.tsx
   EmployeeTable.tsx
 lib/
+  companies.ts
   processAttendance.ts
+  attendanceConstants.ts
   googleSheets.ts
   exportExcel.ts
   dashboardAggregates.ts

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { appendRecords, fetchExistingKeys } from "@/lib/googleSheets";
 import { processAttendanceFromBuffer } from "@/lib/processAttendance";
+import { isCompanyId } from "@/lib/companies";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  const companyId = request.nextUrl.searchParams.get("companyId");
+  if (!companyId || !isCompanyId(companyId)) {
+    return NextResponse.json(
+      { error: "Missing or invalid companyId query parameter" },
+      { status: 400 }
+    );
+  }
   try {
     const formData = await request.formData();
     const file = formData.get("file");
@@ -23,8 +31,8 @@ export async function POST(request: NextRequest) {
     }
     const buffer = Buffer.from(await file.arrayBuffer());
     const records = processAttendanceFromBuffer(buffer);
-    const existing = await fetchExistingKeys();
-    const result = await appendRecords(records, existing);
+    const existing = await fetchExistingKeys(companyId);
+    const result = await appendRecords(companyId, records, existing);
     return NextResponse.json({
       inserted: result.inserted,
       skipped: result.skipped,

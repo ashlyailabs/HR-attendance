@@ -24,6 +24,7 @@ export type DailySummary = {
   avgHours: number;
   lateCount: number;
   overtimeCount: number;
+  earlyExitCount: number;
 };
 
 export type DeptSummary = {
@@ -50,6 +51,8 @@ export type DashboardData = {
   dateRangeLabel: string;
   totalEmployees: number;
   avgDailyHours: number;
+  /** Count of attendance rows with late arrival (same basis as latePercent). */
+  lateArrivalsCount: number;
   latePercent: number;
   overtimeRecordsCount: number;
   earlyExitsCount: number;

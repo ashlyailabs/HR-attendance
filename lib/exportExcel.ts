@@ -56,6 +56,7 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
     dateRangeLabel,
     totalEmployees,
     avgDailyHours,
+    lateArrivalsCount,
     latePercent,
     overtimeRecordsCount,
     earlyExitsCount,
@@ -72,8 +73,9 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
     ["Date range", dateRangeLabel],
     ["Total employees (unique)", totalEmployees],
     ["Avg daily hours", Math.round(avgDailyHours * 100) / 100],
+    ["Late arrivals (count)", lateArrivalsCount],
     ["Late arrivals %", Math.round(latePercent * 100) / 100],
-    ["Overtime records (after 17:30)", overtimeRecordsCount],
+    ["Overtime records (at/after 21:30)", overtimeRecordsCount],
     ["Early exits (before 17:30)", earlyExitsCount],
   ];
   appendSheet(wb, "Overview", overviewHeaders, overviewRows);
@@ -116,13 +118,21 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
   ]);
   appendSheet(wb, "Attendance Log", logHeaders, logRows);
 
-  const dailyHeaders = ["Date", "Headcount", "Avg Hours", "Late Count", "Overtime Count"];
+  const dailyHeaders = [
+    "Date",
+    "Headcount",
+    "Avg Hours",
+    "Late Count",
+    "Overtime Count",
+    "Early Exit Count",
+  ];
   const dailyRows = dailySummaries.map((d) => [
     isoDateToDDMMYYYY(d.date),
     d.headcount,
     Math.round(d.avgHours * 100) / 100,
     d.lateCount,
     d.overtimeCount,
+    d.earlyExitCount,
   ]);
   appendSheet(wb, "Daily Summary", dailyHeaders, dailyRows);
 

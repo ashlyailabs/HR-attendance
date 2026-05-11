@@ -1,6 +1,10 @@
 import * as XLSX from "xlsx";
 import type { AttendanceRecord } from "@/types";
-import { WORK_END_MINS, WORK_START_MINS } from "@/lib/attendanceConstants";
+import {
+  OVERTIME_THRESHOLD_MINS,
+  WORK_END_MINS,
+  WORK_START_MINS,
+} from "@/lib/attendanceConstants";
 
 const LATE_THRESHOLD_MINS = WORK_START_MINS; // 09:05
 
@@ -149,14 +153,21 @@ export function formatDurationMins(mins: number): string {
   return `${h}h ${m}m`;
 }
 
-/** Re-apply 9:05–17:30 rules from punch strings (aligns legacy sheet rows with the dashboard). */
+/**
+ * Re-apply attendance rules from punch strings so legacy sheet rows
+ * stay in sync with the latest dashboard logic:
+ *   - Late          : check-in > 09:05
+ *   - Early exit    : check-out < 17:30
+ *   - Overtime      : check-out >= 21:30 (i.e. > 4 hours past 17:30);
+ *                     leaving between 17:30 and 21:30 is normal.
+ */
 export function enrichAttendanceRecord(r: AttendanceRecord): AttendanceRecord {
   const inM = parseHHMMToMins(r.checkIn);
   const outM = parseHHMMToMins(r.checkOut);
   if (inM == null || outM == null) return r;
   const isLate = inM > WORK_START_MINS;
   const lateMins = isLate ? inM - WORK_START_MINS : 0;
-  const isOvertime = outM > WORK_END_MINS;
+  const isOvertime = outM >= OVERTIME_THRESHOLD_MINS;
   const overtimeMins = isOvertime ? outM - WORK_END_MINS : 0;
   const isEarlyExit = outM < WORK_END_MINS;
   const earlyExitMins = isEarlyExit ? WORK_END_MINS - outM : 0;
@@ -259,7 +270,7 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
 
     const isLate = inMins > LATE_THRESHOLD_MINS;
     const lateMins = isLate ? inMins - LATE_THRESHOLD_MINS : 0;
-    const isOvertime = outMins > WORK_END_MINS;
+    const isOvertime = outMins >= OVERTIME_THRESHOLD_MINS;
     const overtimeMins = isOvertime ? outMins - WORK_END_MINS : 0;
     const isEarlyExit = outMins < WORK_END_MINS;
     const earlyExitMins = isEarlyExit ? WORK_END_MINS - outMins : 0;

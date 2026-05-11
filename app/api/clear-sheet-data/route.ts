@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearAllDataRowsAfterHeader } from "@/lib/googleSheets";
+import { isCompanyId } from "@/lib/companies";
 
 export const dynamic = "force-dynamic";
 
 /**
- * One-time: wipe Sheet1 data (keeps row 1). Requires `CLEAR_SHEET_TOKEN` in `.env.local`
- * matching the JSON body `{ "token": "..." }`.
+ * One-time: wipe Sheet1 data (keeps row 1) for the given company. Requires
+ * `CLEAR_SHEET_TOKEN` in `.env.local` matching the JSON body
+ * `{ "token": "..." }`. The target company is specified via
+ * `?companyId=industries|pvt_ltd`.
  */
 export async function POST(request: NextRequest) {
   const expected = process.env.CLEAR_SHEET_TOKEN?.trim();
@@ -13,6 +16,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: "Set CLEAR_SHEET_TOKEN in .env.local to use this endpoint." },
       { status: 503 }
+    );
+  }
+  const companyId = request.nextUrl.searchParams.get("companyId");
+  if (!companyId || !isCompanyId(companyId)) {
+    return NextResponse.json(
+      { error: "Missing or invalid companyId query parameter" },
+      { status: 400 }
     );
   }
   let body: { token?: string } = {};
@@ -25,7 +35,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid or missing token." }, { status: 401 });
   }
   try {
-    const cleared = await clearAllDataRowsAfterHeader();
+    const cleared = await clearAllDataRowsAfterHeader(companyId);
     return NextResponse.json({
       ok: true,
       cleared,

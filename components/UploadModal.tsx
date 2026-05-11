@@ -1,14 +1,23 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import type { CompanyId } from "@/lib/companies";
 
 type Props = {
   open: boolean;
+  companyId: CompanyId;
+  companyName: string;
   onClose: () => void;
   onSuccess: () => void;
 };
 
-export function UploadModal({ open, onClose, onSuccess }: Props) {
+export function UploadModal({
+  open,
+  companyId,
+  companyName,
+  onClose,
+  onSuccess,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -21,7 +30,10 @@ export function UploadModal({ open, onClose, onSuccess }: Props) {
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        const res = await fetch(
+          `/api/upload?companyId=${encodeURIComponent(companyId)}`,
+          { method: "POST", body: fd }
+        );
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Upload failed");
         setMessage({
@@ -42,7 +54,7 @@ export function UploadModal({ open, onClose, onSuccess }: Props) {
         setBusy(false);
       }
     },
-    [onClose, onSuccess]
+    [companyId, onClose, onSuccess]
   );
 
   if (!open) return null;
@@ -72,6 +84,10 @@ export function UploadModal({ open, onClose, onSuccess }: Props) {
         </h2>
         <p className="mt-2 text-sm text-slate-600">
           Daily export from check-in software. Row 3 headers, data from row 4.
+        </p>
+        <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          Uploading to:{" "}
+          <span className="font-semibold text-slate-900">{companyName}</span>
         </p>
         <div
           onDragEnter={() => setDragOver(true)}
