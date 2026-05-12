@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { appendRecords, fetchExistingKeys } from "@/lib/googleSheets";
+import { appendRecords, fetchExistingKeysAndDates } from "@/lib/googleSheets";
 import { processAttendanceFromBuffer } from "@/lib/processAttendance";
 import { isCompanyId } from "@/lib/companies";
 
@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
     }
     const buffer = Buffer.from(await file.arrayBuffer());
     const records = processAttendanceFromBuffer(buffer);
-    const existing = await fetchExistingKeys(companyId);
-    const result = await appendRecords(companyId, records, existing);
+    const { keys, dates } = await fetchExistingKeysAndDates(companyId);
+    const result = await appendRecords(companyId, records, keys, dates);
     return NextResponse.json({
       inserted: result.inserted,
       skipped: result.skipped,

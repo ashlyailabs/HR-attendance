@@ -5,7 +5,7 @@ import { isCompanyId } from "@/lib/companies";
 export const dynamic = "force-dynamic";
 
 /**
- * One-time: wipe Sheet1 data (keeps row 1) for the given company. Requires
+ * One-time: wipe all Sheet1 values (A1:P) for the given company. Requires
  * `CLEAR_SHEET_TOKEN` in `.env.local` matching the JSON body
  * `{ "token": "..." }`. The target company is specified via
  * `?companyId=industries|pvt_ltd`.
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       cleared,
-      message: "Cleared data rows (row 1 preserved).",
+      message: "Cleared Sheet1 (A1:P).",
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Clear failed";
