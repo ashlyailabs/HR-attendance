@@ -174,7 +174,6 @@ export default function DashboardPage() {
         {current.data && (
           <>
             <KPICards
-              totalEmployees={current.data.totalEmployees}
               avgDailyHours={current.data.avgDailyHours}
               lateArrivalsCount={current.data.lateArrivalsCount}
               latePercent={current.data.latePercent}
