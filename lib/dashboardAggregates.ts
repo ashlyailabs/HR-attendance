@@ -8,6 +8,16 @@ import type {
 import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
 import { enrichAttendanceRecord } from "@/lib/processAttendance";
 
+function parseDurationToHours(dur: string): number {
+  const match = dur.match(/(\d+)h\s*(\d+)m/);
+  if (!match) return 0;
+  return parseFloat((parseInt(match[1]) + parseInt(match[2]) / 60).toFixed(2));
+}
+
+function getHours(r: AttendanceRecord): number {
+  return r.totalHours || parseDurationToHours(r.duration);
+}
+
 /** Build dashboard aggregates from sheet records. */
 export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardData {
   const records = rawRecords.map(enrichAttendanceRecord);
@@ -22,8 +32,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
   const uniqEmp = new Set(sorted.map((r) => r.employeeId));
   const n = sorted.length;
 
-  const avgDailyHours =
-    n > 0 ? sorted.reduce((s, r) => s + r.totalHours, 0) / n : 0;
+  const avgDailyHours = n > 0 ? sorted.reduce((s, r) => s + getHours(r), 0) / n : 0;
   const lateArrivalsCount = sorted.filter((r) => r.isLate).length;
   const latePercent = n > 0 ? (lateArrivalsCount / n) * 100 : 0;
   const overtimeRecordsCount = sorted.filter((r) => r.isOvertime).length;
@@ -49,7 +58,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
       const headcount = list.length;
       const avgHours =
         headcount > 0
-          ? list.reduce((s, x) => s + x.totalHours, 0) / headcount
+          ? list.reduce((s, x) => s + getHours(x), 0) / headcount
           : 0;
       return {
         date,
@@ -75,7 +84,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
       const ids = new Set(list.map((x) => x.employeeId));
       const avgHours =
         list.length > 0
-          ? list.reduce((s, x) => s + x.totalHours, 0) / list.length
+          ? list.reduce((s, x) => s + getHours(x), 0) / list.length
           : 0;
       return {
         department,
@@ -97,7 +106,7 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
       const name =
         list.find((x) => x.employeeName)?.employeeName ?? employeeId;
       const daysPresent = list.length;
-      const totalHours = list.reduce((s, x) => s + x.totalHours, 0);
+      const totalHours = list.reduce((s, x) => s + getHours(x), 0);
       const avgHours = daysPresent > 0 ? totalHours / daysPresent : 0;
       const lateDays = list.filter((x) => x.isLate).length;
       const overtimeDays = list.filter((x) => x.isOvertime).length;

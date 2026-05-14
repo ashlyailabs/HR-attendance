@@ -5,7 +5,7 @@ import { isCompanyId } from "@/lib/companies";
 export const dynamic = "force-dynamic";
 
 /**
- * DELETE — clear all Sheet1 values (A1:P) for the given company.
+ * DELETE — clear all Sheet1 values (A1:Q) for the given company.
  */
 export async function DELETE(request: NextRequest) {
   const companyId = request.nextUrl.searchParams.get("companyId");

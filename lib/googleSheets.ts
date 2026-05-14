@@ -15,16 +15,40 @@ export const SHEET_HEADERS = [
   "Check-In",
   "Check-Out",
   "Duration",
-  "Total Hours",
   "Is Late",
   "Late By (mins)",
   "Is Overtime",
   "Overtime (mins)",
   "Is Early Exit",
   "Early Exit (mins)",
+  "Remarks",
 ] as const;
 
 export const SHEET_COL_COUNT = SHEET_HEADERS.length;
+
+/** 0-based column index → A1 column letters (0=A, 16=Q). */
+function columnIndexToA1(zeroBasedIndex: number): string {
+  let n = zeroBasedIndex;
+  let s = "";
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
+/** Last data column letter (e.g. Q for 17 columns). */
+const SHEET_LAST_COL_A1 = columnIndexToA1(SHEET_COL_COUNT - 1);
+
+/** Full Sheet1 grid used for attendance (dynamic width). */
+function sheetGridRange(): string {
+  return `Sheet1!A1:${SHEET_LAST_COL_A1}100000`;
+}
+
+function sheetRowRange(startRow1Based: number, rowCount: number): string {
+  const endRow1Based = startRow1Based + rowCount - 1;
+  return `Sheet1!A${startRow1Based}:${SHEET_LAST_COL_A1}${endRow1Based}`;
+}
 
 const NAVY_BG = hexToColor("#1E3A5F");
 const HEADER_GRAY_BG = hexToColor("#F1F5F9");
@@ -81,6 +105,27 @@ function padRow(row: unknown[], len: number): string[] {
   return out.slice(0, len);
 }
 
+/** Every row sent to `values.update` must be exactly `SHEET_COL_COUNT` wide so column A stays aligned. */
+function fixedRow(
+  cells: (string | number | boolean)[]
+): (string | number | boolean)[] {
+  const out: (string | number | boolean)[] = [];
+  for (let i = 0; i < SHEET_COL_COUNT; i++) {
+    out.push(i < cells.length ? cells[i] : "");
+  }
+  return out;
+}
+
+/** Row 1 of a date block: human date only in cell A (index 0), rest empty. */
+function dateBannerRow(displayDateLabel: string): (string | number | boolean)[] {
+  return fixedRow([displayDateLabel]);
+}
+
+/** Row 2 of a date block: full header labels A→last col. */
+function columnHeaderRow(): (string | number | boolean)[] {
+  return fixedRow([...SHEET_HEADERS]);
+}
+
 function filledCellCount(row: string[]): number {
   return row.filter((c) => String(c).trim() !== "").length;
 }
@@ -97,25 +142,31 @@ function isDataRow(padded: string[]): boolean {
   return true;
 }
 
-function recordToRow(r: AttendanceRecord): (string | number | boolean)[] {
-  return [
-    r.employeeId,
-    r.employeeName,
-    r.branch,
-    r.department,
-    r.designation,
-    r.date,
-    r.checkIn,
-    r.checkOut,
-    r.duration,
-    r.totalHours,
-    r.isLate,
-    r.lateMins,
-    r.isOvertime,
-    r.overtimeMins,
-    r.isEarlyExit,
-    r.earlyExitMins,
-  ];
+/** Sheet row for **new** inserts only; Remarks is always blank so HR notes persist on the sheet and are never overwritten by upload. */
+function recordToRowForAppend(_r: AttendanceRecord): (string | number | boolean)[] {
+  return fixedRow([
+    _r.employeeId,
+    _r.employeeName,
+    _r.branch,
+    _r.department,
+    _r.designation,
+    _r.date,
+    _r.checkIn,
+    _r.checkOut,
+    _r.duration,
+    _r.isLate,
+    _r.lateMins,
+    _r.isOvertime,
+    _r.overtimeMins,
+    _r.isEarlyExit,
+    _r.earlyExitMins,
+    "",
+  ]);
+}
+function parseDurationToHours(dur: string): number {
+  const match = dur.match(/(\d+)h\s*(\d+)m/);
+  if (!match) return 0;
+  return parseFloat((parseInt(match[1]) + parseInt(match[2]) / 60).toFixed(2));
 }
 
 function parseSheetBool(v: string): boolean {
@@ -124,7 +175,7 @@ function parseSheetBool(v: string): boolean {
 }
 
 function rowToRecord(row: string[]): AttendanceRecord | null {
-  if (row.length < 14) return null;
+  if (row.length < 13) return null;
   const [
     employeeId,
     employeeName,
@@ -135,7 +186,6 @@ function rowToRecord(row: string[]): AttendanceRecord | null {
     checkIn,
     checkOut,
     duration,
-    totalHoursRaw,
     isLateRaw,
     lateMinsRaw,
     isOvertimeRaw,
@@ -153,6 +203,9 @@ function rowToRecord(row: string[]): AttendanceRecord | null {
       ? parseInt(String(earlyExitMinsRaw ?? "0"), 10) || 0
       : 0;
 
+  const remarks =
+    row.length > 16 ? String(row[16] ?? "").trim() : "";
+
   return {
     employeeId: employeeId.trim(),
     employeeName: (employeeName ?? "").trim(),
@@ -163,13 +216,14 @@ function rowToRecord(row: string[]): AttendanceRecord | null {
     checkIn: (checkIn ?? "").trim(),
     checkOut: (checkOut ?? "").trim(),
     duration: (duration ?? "").trim(),
-    totalHours: parseFloat(String(totalHoursRaw ?? "0")) || 0,
+    totalHours: parseDurationToHours((duration ?? "").trim()),
     isLate: parseSheetBool(String(isLateRaw ?? "")),
     lateMins: parseInt(String(lateMinsRaw ?? "0"), 10) || 0,
     isOvertime: parseSheetBool(String(isOvertimeRaw ?? "")),
     overtimeMins: parseInt(String(overtimeMinsRaw ?? "0"), 10) || 0,
     isEarlyExit,
     earlyExitMins,
+    remarks,
   };
 }
 
@@ -178,7 +232,7 @@ async function getAllValueRows(companyId: string): Promise<string[][]> {
   const spreadsheetId = getSpreadsheetId(companyId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: "Sheet1!A1:P100000",
+    range: sheetGridRange(),
   });
   const values = res.data.values ?? [];
   return values.map((row) => padRow(row, SHEET_COL_COUNT));
@@ -218,16 +272,8 @@ export async function fetchExistingKeys(companyId: string): Promise<Set<string>>
 
 type AppendRowKind = "blank" | "date" | "header" | "data";
 
-function emptyRow(): string[] {
-  return Array.from({ length: SHEET_COL_COUNT }, () => "");
-}
-
-function valuesRowFromRecord(
-  r: (string | number | boolean)[]
-): (string | number | boolean)[] {
-  const row = [...r];
-  while (row.length < SHEET_COL_COUNT) row.push("");
-  return row.slice(0, SHEET_COL_COUNT);
+function blankRow(): (string | number | boolean)[] {
+  return fixedRow([]);
 }
 
 function buildStyledAppendPayload(params: {
@@ -259,20 +305,18 @@ function buildStyledAppendPayload(params: {
     const needDayBlock = !datesInSheet.has(isoDate);
     if (needDayBlock) {
       if (startRow1Based > 1 || wroteAnyInThisAppend) {
-        valueRows.push(emptyRow());
+        valueRows.push(blankRow());
         rowKinds.push("blank");
       }
       const label = isoDateToDDMMYYYY(isoDate);
-      const dateRow: (string | number | boolean)[] = emptyRow();
-      dateRow[0] = label;
-      valueRows.push(valuesRowFromRecord(dateRow));
+      valueRows.push(dateBannerRow(label));
       rowKinds.push("date");
-      valueRows.push(valuesRowFromRecord([...SHEET_HEADERS]));
+      valueRows.push(columnHeaderRow());
       rowKinds.push("header");
       datesInSheet.add(isoDate);
     }
     for (const rec of list) {
-      valueRows.push(valuesRowFromRecord(recordToRow(rec)));
+      valueRows.push(recordToRowForAppend(rec));
       rowKinds.push("data");
     }
     wroteAnyInThisAppend = true;
@@ -404,6 +448,59 @@ function buildFormatRequests(
   return { mergeRequests, repeatRequests };
 }
 
+/** Normalize grid range for batch ops (sheetId required for unmerge). */
+function withSheetId(
+  m: sheets_v4.Schema$GridRange,
+  sheetId: number
+): sheets_v4.Schema$GridRange {
+  return { ...m, sheetId: m.sheetId ?? sheetId };
+}
+
+async function unmergeAllMergedRegions(
+  spreadsheetId: string,
+  sheetId: number
+): Promise<void> {
+  const sheets = getSheetsClient();
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties.sheetId,merges)",
+  });
+  const sheet = meta.data.sheets?.find((s) => s.properties?.sheetId === sheetId);
+  const merges = sheet?.merges ?? [];
+  if (merges.length === 0) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: merges.map((m) => ({
+        unmergeCells: { range: withSheetId(m, sheetId) },
+      })),
+    },
+  });
+}
+
+/** Unmerge any merged regions overlapping the rows we are about to overwrite (avoids values landing in wrong columns). */
+function unmergeRequestsForRowBand(
+  sheetId: number,
+  merges: sheets_v4.Schema$GridRange[] | undefined,
+  startRow0: number,
+  endRow0Exclusive: number
+): sheets_v4.Schema$Request[] {
+  if (!merges?.length) return [];
+  const out: sheets_v4.Schema$Request[] = [];
+  for (const m of merges) {
+    const sid = m.sheetId ?? sheetId;
+    if (sid !== sheetId) continue;
+    const r0 = m.startRowIndex ?? 0;
+    const r1 = m.endRowIndex ?? 0;
+    if (r0 < endRow0Exclusive && r1 > startRow0) {
+      out.push({
+        unmergeCells: { range: withSheetId(m, sheetId) },
+      });
+    }
+  }
+  return out;
+}
+
 export async function appendRecords(
   companyId: string,
   records: AttendanceRecord[],
@@ -434,6 +531,8 @@ export async function appendRecords(
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId(companyId);
+  const sheetId = await getSheet1Id(spreadsheetId);
+
   const valueMatrix = await getAllValueRows(companyId);
   const startRow1Based = valueMatrix.length + 1;
 
@@ -443,9 +542,29 @@ export async function appendRecords(
     startRow1Based,
   });
 
-  const endRow = startRow1Based + valueRows.length - 1;
-  const range = `Sheet1!A${startRow1Based}:P${endRow}`;
+  const rowCount = valueRows.length;
+  const startRow0 = startRow1Based - 1;
+  const endRow0Exclusive = startRow0 + rowCount;
 
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties.sheetId,properties.title,merges)",
+  });
+  const sheet = meta.data.sheets?.find((s) => s.properties?.sheetId === sheetId);
+  const unmerges = unmergeRequestsForRowBand(
+    sheetId,
+    sheet?.merges as sheets_v4.Schema$GridRange[] | undefined,
+    startRow0,
+    endRow0Exclusive
+  );
+  if (unmerges.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: unmerges },
+    });
+  }
+
+  const range = sheetRowRange(startRow1Based, rowCount);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range,
@@ -453,7 +572,6 @@ export async function appendRecords(
     requestBody: { values: valueRows },
   });
 
-  const sheetId = await getSheet1Id(spreadsheetId);
   const { mergeRequests, repeatRequests } = buildFormatRequests(
     sheetId,
     startRow1Based,
@@ -484,10 +602,12 @@ export async function readAllRecords(companyId: string): Promise<AttendanceRecor
   return out;
 }
 
-/** Clears all values in Sheet1 (A1:P). Does not rely on a legacy single header row. */
+/** Clears all values in Sheet1 (full width) and removes merged regions so the tab is empty for the next upload. */
 export async function clearAllDataRowsAfterHeader(companyId: string): Promise<number> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId(companyId);
+  const sheetId = await getSheet1Id(spreadsheetId);
+
   const values = await getAllValueRows(companyId);
   const cleared = values.filter((row) =>
     row.some((c) => String(c ?? "").trim() !== "")
@@ -495,8 +615,10 @@ export async function clearAllDataRowsAfterHeader(companyId: string): Promise<nu
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
-    range: "Sheet1!A1:P100000",
+    range: sheetGridRange(),
   });
+
+  await unmergeAllMergedRegions(spreadsheetId, sheetId);
 
   return cleared;
 }

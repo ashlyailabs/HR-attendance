@@ -1,7 +1,6 @@
 import * as XLSX from "xlsx";
 import type { AttendanceRecord } from "@/types";
 import {
-  OVERTIME_THRESHOLD_MINS,
   WORK_END_MINS,
   WORK_START_MINS,
 } from "@/lib/attendanceConstants";
@@ -165,10 +164,12 @@ export function enrichAttendanceRecord(r: AttendanceRecord): AttendanceRecord {
   const inM = parseHHMMToMins(r.checkIn);
   const outM = parseHHMMToMins(r.checkOut);
   if (inM == null || outM == null) return r;
+  const durationMins = outM - inM;
+  const STANDARD_SHIFT_MINS = WORK_END_MINS - WORK_START_MINS; // 505 mins
   const isLate = inM > WORK_START_MINS;
   const lateMins = isLate ? inM - WORK_START_MINS : 0;
-  const isOvertime = outM >= OVERTIME_THRESHOLD_MINS;
-  const overtimeMins = isOvertime ? outM - WORK_END_MINS : 0;
+  const isOvertime = durationMins > STANDARD_SHIFT_MINS + 240; // > 745 mins
+  const overtimeMins = isOvertime ? durationMins - STANDARD_SHIFT_MINS : 0;
   const isEarlyExit = outM < WORK_END_MINS;
   const earlyExitMins = isEarlyExit ? WORK_END_MINS - outM : 0;
   return {
@@ -181,6 +182,7 @@ export function enrichAttendanceRecord(r: AttendanceRecord): AttendanceRecord {
     earlyExitMins,
   };
 }
+
 
 type RowMap = Record<string, unknown>;
 
@@ -270,8 +272,10 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
 
     const isLate = inMins > LATE_THRESHOLD_MINS;
     const lateMins = isLate ? inMins - LATE_THRESHOLD_MINS : 0;
-    const isOvertime = outMins >= OVERTIME_THRESHOLD_MINS;
-    const overtimeMins = isOvertime ? outMins - WORK_END_MINS : 0;
+    const STANDARD_SHIFT_MINS = WORK_END_MINS - WORK_START_MINS; // 505 mins = 8h 25m
+    const isOvertime = durationMins > STANDARD_SHIFT_MINS + 240; // > 745 mins = 12h 25m
+    const overtimeMins = isOvertime ? durationMins - STANDARD_SHIFT_MINS : 0;
+
     const isEarlyExit = outMins < WORK_END_MINS;
     const earlyExitMins = isEarlyExit ? WORK_END_MINS - outMins : 0;
 
@@ -292,6 +296,7 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
       overtimeMins,
       isEarlyExit,
       earlyExitMins,
+      remarks: "",
     });
   }
 

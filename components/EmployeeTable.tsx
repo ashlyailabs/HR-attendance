@@ -163,6 +163,7 @@ export function EmployeeTable({ records }: Props) {
               <th className="px-4 py-3 font-medium">Check-Out</th>
               <th className="px-4 py-3 font-medium">Duration</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Remarks</th>
             </tr>
           </thead>
           <tbody>
@@ -187,6 +188,13 @@ export function EmployeeTable({ records }: Props) {
                     >
                       {st.label}
                     </span>
+                  </td>
+                  <td className="max-w-[220px] px-4 py-3 text-slate-700">
+                    {r.remarks?.trim() ? (
+                      <span className="text-slate-800">{r.remarks}</span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                 </tr>
               );

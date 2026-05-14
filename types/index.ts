@@ -16,6 +16,8 @@ export type AttendanceRecord = {
   overtimeMins: number;
   isEarlyExit: boolean;
   earlyExitMins: number;
+  /** HR-entered in Google Sheet; not overwritten by uploads. */
+  remarks: string;
 };
 
 export type DailySummary = {

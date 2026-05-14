@@ -97,6 +97,7 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
     "Overtime (mins)",
     "Is Early Exit",
     "Early Exit (mins)",
+    "Remarks",
   ];
   const logRows = records.map((r) => [
     r.employeeId,
@@ -115,6 +116,7 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
     r.overtimeMins,
     r.isEarlyExit,
     r.earlyExitMins,
+    r.remarks ?? "",
   ]);
   appendSheet(wb, "Attendance Log", logHeaders, logRows);
 
