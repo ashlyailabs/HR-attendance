@@ -1,6 +1,7 @@
 import XLSX from "xlsx-js-style";
-import type { DashboardData } from "@/types";
+import type { AttendanceRecord, DashboardData } from "@/types";
 import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
+import { buildMonthlySummaryRows } from "@/lib/monthlySummary";
 
 const NAVY = "FF1E3A5F";
 
@@ -178,6 +179,43 @@ export function buildDashboardExport(data: DashboardData): ArrayBuffer {
   ]);
   appendSheet(wb, "Employee Summary", empHeaders, empRows);
 
+  return XLSX.write(wb, {
+    type: "array",
+    bookType: "xlsx",
+    cellStyles: true,
+  }) as ArrayBuffer;
+}
+
+/** Single-sheet monthly report: navy header, one row per employee for that month, name-sorted. */
+export function exportMonthlyReport(
+  records: AttendanceRecord[],
+  yearMonth: string
+): ArrayBuffer {
+  const rows = buildMonthlySummaryRows(records, yearMonth);
+  const headers = [
+    "Employee ID",
+    "Employee Name",
+    "Department",
+    "Days Present",
+    "Avg Hours/Day",
+    "Late Days",
+    "Early Exit Days",
+    "Overtime Days",
+    "Total Overtime",
+  ];
+  const dataRows = rows.map((row) => [
+    row.employeeId,
+    row.employeeName,
+    row.department,
+    row.daysPresent,
+    row.avgHoursPerDay,
+    row.lateDays,
+    row.earlyExitDays,
+    row.overtimeDays,
+    row.totalOvertimeMins,
+  ]);
+  const wb = XLSX.utils.book_new();
+  appendSheet(wb, "Monthly Report", headers, dataRows);
   return XLSX.write(wb, {
     type: "array",
     bookType: "xlsx",

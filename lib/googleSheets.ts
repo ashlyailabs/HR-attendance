@@ -426,8 +426,8 @@ function buildFormatRequests(
           row0 + 1,
           0,
           SHEET_COL_COUNT,
-          { backgroundColor: bg },
-          "userEnteredFormat.backgroundColor"
+          { backgroundColor: bg, textFormat: { bold: false, fontSize: 10 } },
+          "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.textFormat.fontSize"
         )
       );
     } else {
