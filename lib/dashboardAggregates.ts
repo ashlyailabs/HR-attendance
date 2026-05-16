@@ -6,6 +6,7 @@ import type {
   EmployeeSummary,
 } from "@/types";
 import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
+import { getHolidayMap } from "@/lib/holidays";
 import { enrichAttendanceRecord } from "@/lib/processAttendance";
 
 function parseDurationToHours(dur: string): number {
@@ -20,6 +21,7 @@ function getHours(r: AttendanceRecord): number {
 
 /** Build dashboard aggregates from sheet records. */
 export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardData {
+  const holidayMap = getHolidayMap();
   const records = rawRecords.map(enrichAttendanceRecord);
   const sorted = [...records].sort((a, b) => {
     if (a.date !== b.date) return a.date.localeCompare(b.date);
@@ -33,10 +35,12 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
   const n = sorted.length;
 
   const avgDailyHours = n > 0 ? sorted.reduce((s, r) => s + getHours(r), 0) / n : 0;
-  const lateArrivalsCount = sorted.filter((r) => r.isLate).length;
-  const latePercent = n > 0 ? (lateArrivalsCount / n) * 100 : 0;
-  const overtimeRecordsCount = sorted.filter((r) => r.isOvertime).length;
-  const earlyExitsCount = sorted.filter((r) => r.isEarlyExit).length;
+  const nonHolidayRecords = sorted.filter((r) => !holidayMap.has(r.date));
+  const nKpi = nonHolidayRecords.length;
+  const lateArrivalsCount = nonHolidayRecords.filter((r) => r.isLate).length;
+  const latePercent = nKpi > 0 ? (lateArrivalsCount / nKpi) * 100 : 0;
+  const overtimeRecordsCount = nonHolidayRecords.filter((r) => r.isOvertime).length;
+  const earlyExitsCount = nonHolidayRecords.filter((r) => r.isEarlyExit).length;
 
   const dateRangeLabel =
     minD && maxD
@@ -60,13 +64,14 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
         headcount > 0
           ? list.reduce((s, x) => s + getHours(x), 0) / headcount
           : 0;
+      const isHoliday = holidayMap.has(date);
       return {
         date,
         headcount,
         avgHours,
-        lateCount: list.filter((x) => x.isLate).length,
-        overtimeCount: list.filter((x) => x.isOvertime).length,
-        earlyExitCount: list.filter((x) => x.isEarlyExit).length,
+        lateCount: isHoliday ? 0 : list.filter((x) => x.isLate).length,
+        overtimeCount: isHoliday ? 0 : list.filter((x) => x.isOvertime).length,
+        earlyExitCount: isHoliday ? 0 : list.filter((x) => x.isEarlyExit).length,
       };
     });
 
@@ -90,8 +95,9 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
         department,
         uniqueEmployees: ids.size,
         avgHours,
-        lateCount: list.filter((x) => x.isLate).length,
-        overtimeCount: list.filter((x) => x.isOvertime).length,
+        lateCount: list.filter((x) => x.isLate && !holidayMap.has(x.date)).length,
+        overtimeCount: list.filter((x) => x.isOvertime && !holidayMap.has(x.date))
+          .length,
       };
     });
 
@@ -108,10 +114,17 @@ export function buildDashboardData(rawRecords: AttendanceRecord[]): DashboardDat
       const daysPresent = list.length;
       const totalHours = list.reduce((s, x) => s + getHours(x), 0);
       const avgHours = daysPresent > 0 ? totalHours / daysPresent : 0;
-      const lateDays = list.filter((x) => x.isLate).length;
-      const overtimeDays = list.filter((x) => x.isOvertime).length;
-      const earlyExitDays = list.filter((x) => x.isEarlyExit).length;
-      const totalOvertimeMins = list.reduce((s, x) => s + x.overtimeMins, 0);
+      const lateDays = list.filter((x) => x.isLate && !holidayMap.has(x.date)).length;
+      const overtimeDays = list.filter(
+        (x) => x.isOvertime && !holidayMap.has(x.date)
+      ).length;
+      const earlyExitDays = list.filter(
+        (x) => x.isEarlyExit && !holidayMap.has(x.date)
+      ).length;
+      const totalOvertimeMins = list.reduce(
+        (s, x) => s + (holidayMap.has(x.date) ? 0 : x.overtimeMins),
+        0
+      );
       return {
         employeeId,
         employeeName: name,

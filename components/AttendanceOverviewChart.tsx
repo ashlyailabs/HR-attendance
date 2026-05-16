@@ -5,6 +5,7 @@ import type { DashboardData } from "@/types";
 import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
 import { useIsDarkMode } from "@/components/ThemeToggle";
 import type { TooltipProps } from "recharts";
+import { getHolidayMap } from "@/lib/holidays";
 import {
   Bar,
   BarChart,
@@ -15,6 +16,7 @@ import {
   YAxis,
 } from "recharts";
 
+const holidayMap = getHolidayMap();
 const LATE = "#D97706";
 const OVERTIME = "#059669";
 const EARLY = "#DC2626";
@@ -71,12 +73,38 @@ function OverviewTooltip({
 
 export function AttendanceOverviewChart({ data }: Props) {
   const isDark = useIsDarkMode();
-  const chartData: OverviewRow[] = data.dailySummaries.map((d) => ({
-    dateLabel: isoDateToDDMMYYYY(d.date),
-    lateArrivals: d.lateCount,
-    overtime: d.overtimeCount,
-    earlyExits: d.earlyExitCount,
-  }));
+
+const existingDates = new Set(data.dailySummaries.map((d) => d.date));
+
+// Add holiday dates that have no attendance data
+const allDates = [...existingDates];
+for (const [isoDate] of holidayMap) {
+  if (!existingDates.has(isoDate)) {
+    // Only add if it falls within the loaded data range
+    const dates = data.dailySummaries.map((d) => d.date).sort();
+    const min = dates[0];
+    const max = dates[dates.length - 1];
+    if (min && max && isoDate >= min && isoDate <= max) {
+      allDates.push(isoDate);
+    }
+  }
+}
+allDates.sort();
+
+const summaryMap = new Map(data.dailySummaries.map((d) => [d.date, d]));
+
+const chartData: OverviewRow[] = allDates.map((iso) => {
+  const d = summaryMap.get(iso);
+  const holiday = holidayMap.get(iso);
+  return {
+    dateLabel: holiday && !d
+      ? `${isoDateToDDMMYYYY(iso)} (${holiday.name})`
+      : isoDateToDDMMYYYY(iso),
+    lateArrivals: d?.lateCount ?? 0,
+    overtime: d?.overtimeCount ?? 0,
+    earlyExits: d?.earlyExitCount ?? 0,
+  };
+});
 
   const gridStroke = isDark ? "#334155" : "#e2e8f0";
   const tickFill = isDark ? "#94a3b8" : "#94a3b8";
