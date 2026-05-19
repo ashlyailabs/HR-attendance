@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { AttendanceRecord, DashboardData } from "@/types";
+import type { AttendanceRecord, DashboardData, MissedPunch } from "@/types";
+import { MissedPunchesAlert } from "@/components/MissedPunchesAlert";
 import { AttendanceOverviewChart } from "@/components/AttendanceOverviewChart";
 import { EmployeeDrillDown } from "@/components/EmployeeDrillDown";
 import { EmployeeTable } from "@/components/EmployeeTable";
@@ -47,6 +48,28 @@ export default function DashboardPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [drillDownEmployeeId, setDrillDownEmployeeId] = useState<string | null>(
     null
+  );
+  const [missedPunchesByCompany, setMissedPunchesByCompany] = useState<
+    Record<CompanyId, MissedPunch[]>
+  >(() =>
+    COMPANIES.reduce(
+      (acc, c) => {
+        acc[c.id] = [];
+        return acc;
+      },
+      {} as Record<CompanyId, MissedPunch[]>
+    )
+  );
+  const [missedPunchesDismissed, setMissedPunchesDismissed] = useState<
+    Record<CompanyId, boolean>
+  >(() =>
+    COMPANIES.reduce(
+      (acc, c) => {
+        acc[c.id] = false;
+        return acc;
+      },
+      {} as Record<CompanyId, boolean>
+    )
   );
 
   const current = companyState[activeCompany];
@@ -96,6 +119,25 @@ export default function DashboardPage() {
   useEffect(() => {
     setDrillDownEmployeeId(null);
   }, [activeCompany]);
+
+  const activeMissedPunches = missedPunchesByCompany[activeCompany];
+  const showMissedPunchesAlert =
+    activeMissedPunches.length > 0 && !missedPunchesDismissed[activeCompany];
+
+  const handleUploadSuccess = useCallback(
+    (result: { missedPunches: MissedPunch[] }) => {
+      setMissedPunchesByCompany((prev) => ({
+        ...prev,
+        [activeCompany]: result.missedPunches,
+      }));
+      setMissedPunchesDismissed((prev) => ({
+        ...prev,
+        [activeCompany]: false,
+      }));
+      void loadCompany(activeCompany);
+    },
+    [activeCompany, loadCompany]
+  );
 
   const handleExport = () => {
     if (!current.data) return;
@@ -184,6 +226,18 @@ export default function DashboardPage() {
           })}
         </nav>
 
+        {showMissedPunchesAlert && (
+          <MissedPunchesAlert
+            missedPunches={activeMissedPunches}
+            onDismiss={() =>
+              setMissedPunchesDismissed((prev) => ({
+                ...prev,
+                [activeCompany]: true,
+              }))
+            }
+          />
+        )}
+
         {current.data && (
           <>
             <KPICards
@@ -220,7 +274,7 @@ export default function DashboardPage() {
           companyId={activeCompany}
           companyName={activeCompanyName}
           onClose={() => setUploadOpen(false)}
-          onSuccess={() => void loadCompany(activeCompany)}
+          onSuccess={handleUploadSuccess}
         />
 
         <EmployeeDrillDown

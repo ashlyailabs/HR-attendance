@@ -2,14 +2,26 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { CompanyId } from "@/lib/companies";
+import type { MissedPunch } from "@/types";
+import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
+
+type UploadResult = {
+  inserted: number;
+  skipped: number;
+  missedPunches: MissedPunch[];
+};
 
 type Props = {
   open: boolean;
   companyId: CompanyId;
   companyName: string;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (result: UploadResult) => void;
 };
+
+function punchTypeLabel(type: MissedPunch["type"]): string {
+  return type === "missing-out" ? "Missing check-out" : "Missing check-in";
+}
 
 export function UploadModal({
   open,
@@ -22,11 +34,13 @@ export function UploadModal({
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [missedPunches, setMissedPunches] = useState<MissedPunch[]>([]);
 
   const uploadFile = useCallback(
     async (file: File) => {
       setBusy(true);
       setMessage(null);
+      setMissedPunches([]);
       const fd = new FormData();
       fd.append("file", file);
       try {
@@ -36,15 +50,24 @@ export function UploadModal({
         );
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Upload failed");
+        const punches = (json.missedPunches as MissedPunch[] | undefined) ?? [];
+        setMissedPunches(punches);
         setMessage({
           type: "ok",
           text: `Inserted ${json.inserted as number}, skipped ${json.skipped as number} duplicate(s).`,
         });
-        onSuccess();
-        setTimeout(() => {
-          onClose();
-          setMessage(null);
-        }, 1200);
+        onSuccess({
+          inserted: json.inserted as number,
+          skipped: json.skipped as number,
+          missedPunches: punches,
+        });
+        if (punches.length === 0) {
+          setTimeout(() => {
+            onClose();
+            setMessage(null);
+            setMissedPunches([]);
+          }, 1200);
+        }
       } catch (e) {
         setMessage({
           type: "err",
@@ -56,6 +79,13 @@ export function UploadModal({
     },
     [companyId, onClose, onSuccess]
   );
+
+  const handleClose = () => {
+    if (busy) return;
+    setMessage(null);
+    setMissedPunches([]);
+    onClose();
+  };
 
   if (!open) return null;
 
@@ -73,10 +103,10 @@ export function UploadModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="upload-modal-title"
-      onClick={(e) => e.target === e.currentTarget && !busy && onClose()}
+      onClick={(e) => e.target === e.currentTarget && !busy && handleClose()}
     >
       <div
-        className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-800"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-800"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="upload-modal-title" className="text-lg font-semibold text-navy dark:text-slate-100">
@@ -132,14 +162,62 @@ export function UploadModal({
             {message.text}
           </p>
         )}
+        {missedPunches.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/60 dark:bg-amber-950/40">
+            <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+              ⚠️ {missedPunches.length} employee
+              {missedPunches.length === 1 ? "" : "s"} have incomplete punch records:
+            </p>
+            <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200/80 bg-white dark:border-amber-800/40 dark:bg-slate-900/40">
+              <table className="min-w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-amber-100 bg-amber-50/80 text-xs uppercase tracking-wide text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                    <th className="px-2 py-2 font-medium">Employee Name</th>
+                    <th className="px-2 py-2 font-medium">Department</th>
+                    <th className="px-2 py-2 font-medium">Date</th>
+                    <th className="px-2 py-2 font-medium">Punch Type</th>
+                    <th className="px-2 py-2 font-medium">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {missedPunches.map((p) => (
+                    <tr
+                      key={`${p.employeeId}-${p.date}-${p.type}`}
+                      className="border-b border-amber-50 last:border-0 dark:border-amber-900/30"
+                    >
+                      <td className="px-2 py-2 text-slate-800 dark:text-slate-200">
+                        {p.employeeName}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700 dark:text-slate-300">
+                        {p.department || "—"}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700 dark:text-slate-300">
+                        {isoDateToDDMMYYYY(p.date)}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700 dark:text-slate-300">
+                        {punchTypeLabel(p.type)}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700 dark:text-slate-300">
+                        {p.time}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-amber-800 dark:text-amber-200/80">
+              Informational only — follow up with these employees manually.
+            </p>
+          </div>
+        )}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             disabled={busy}
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
           >
-            Cancel
+            {missedPunches.length > 0 ? "Close" : "Cancel"}
           </button>
         </div>
       </div>

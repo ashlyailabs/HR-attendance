@@ -1,7 +1,7 @@
 import { google, sheets_v4 } from "googleapis";
 import type { AttendanceRecord } from "@/types";
 import { getSheetIdForCompany } from "@/lib/companies";
-import { isoDateToDDMMYYYY } from "@/lib/formatDisplay";
+import { isoDateToDDMMYYYY, normalizeToISO } from "@/lib/formatDisplay";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
@@ -52,8 +52,11 @@ function sheetRowRange(startRow1Based: number, rowCount: number): string {
 
 const NAVY_BG = hexToColor("#1E3A5F");
 const HEADER_GRAY_BG = hexToColor("#F1F5F9");
-const DATA_ALT_BG = hexToColor("#F8FAFC");
 const WHITE = { red: 1, green: 1, blue: 1 };
+const DARK_TEXT = { red: 0.1, green: 0.1, blue: 0.1 };
+
+/** Late By / Overtime / Early Exit minute columns (0-based). */
+const MINUTES_COLUMN_INDICES = [10, 12, 14] as const;
 
 function hexToColor(hex: string): sheets_v4.Schema$Color {
   const n = hex.replace("#", "");
@@ -116,12 +119,16 @@ function fixedRow(
   return out;
 }
 
-/** Row 1 of a date block: human date only in cell A (index 0), rest empty. */
+/** Date banner: human-readable date in column A only; full-width navy styling applied via repeatCell. */
 function dateBannerRow(displayDateLabel: string): (string | number | boolean)[] {
   return fixedRow([displayDateLabel]);
 }
 
-/** Row 2 of a date block: full header labels A→last col. */
+function blankRow(): (string | number | boolean)[] {
+  return fixedRow([]);
+}
+
+/** Column labels row after each date banner. */
 function columnHeaderRow(): (string | number | boolean)[] {
   return fixedRow([...SHEET_HEADERS]);
 }
@@ -132,25 +139,31 @@ function filledCellCount(row: string[]): number {
 
 /**
  * Data rows only: real employee punches. Skips blank rows, date banners,
- * subheader rows, and sparse rows (< 3 filled cells).
+ * header label row, and sparse rows (< 3 filled cells).
  */
 function isDataRow(padded: string[]): boolean {
   const empId = padded[0]?.trim() ?? "";
   if (!empId) return false;
   if (empId.toLowerCase() === "employee id") return false;
   if (filledCellCount(padded) < 3) return false;
+  // Date banner: "06 May 2026" in column A
+  if (/^\d{2}\s[A-Za-z]{3}\s\d{4}$/.test(empId)) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(empId)) return false; // "2026-05-01"
+  if (/^\d{2}-\d{2}-\d{4}$/.test(empId)) return false; // "01-05-2026"
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(empId)) return false; // "01/05/2026"
   return true;
 }
 
 /** Sheet row for **new** inserts only; Remarks is always blank so HR notes persist on the sheet and are never overwritten by upload. */
 function recordToRowForAppend(_r: AttendanceRecord): (string | number | boolean)[] {
+  const dateIso = normalizeToISO(_r.date);
   return fixedRow([
     _r.employeeId,
     _r.employeeName,
     _r.branch,
     _r.department,
     _r.designation,
-    _r.date,
+    dateIso,
     _r.checkIn,
     _r.checkOut,
     _r.duration,
@@ -206,13 +219,14 @@ function rowToRecord(row: string[]): AttendanceRecord | null {
   const remarks =
     row.length > 16 ? String(row[16] ?? "").trim() : "";
 
+  const dateIso = normalizeToISO(String(date ?? "").trim());
   return {
     employeeId: employeeId.trim(),
     employeeName: (employeeName ?? "").trim(),
     branch: (branch ?? "").trim(),
     department: (department ?? "").trim(),
     designation: (designation ?? "").trim(),
-    date: date.trim(),
+    date: dateIso,
     checkIn: (checkIn ?? "").trim(),
     checkOut: (checkOut ?? "").trim(),
     duration: (duration ?? "").trim(),
@@ -235,7 +249,9 @@ async function getAllValueRows(companyId: string): Promise<string[][]> {
     range: sheetGridRange(),
   });
   const values = res.data.values ?? [];
-  return values.map((row) => padRow(row, SHEET_COL_COUNT));
+  return values
+    .filter((row) => (row as unknown[]).some((c) => String(c ?? "").trim() !== ""))
+    .map((row) => padRow(row, SHEET_COL_COUNT));
 }
 
 function scanSheetForKeysAndDates(values: string[][]): {
@@ -249,8 +265,8 @@ function scanSheetForKeysAndDates(values: string[][]): {
     if (!isDataRow(padded)) continue;
     const rec = rowToRecord(padded);
     if (rec) {
-      keys.add(`${rec.employeeId}|${rec.date}`);
-      dates.add(rec.date);
+      keys.add(`${rec.employeeId}|${normalizeToISO(rec.date)}`);
+      dates.add(normalizeToISO(rec.date));
     }
   }
   return { keys, dates };
@@ -272,19 +288,14 @@ export async function fetchExistingKeys(companyId: string): Promise<Set<string>>
 
 type AppendRowKind = "blank" | "date" | "header" | "data";
 
-function blankRow(): (string | number | boolean)[] {
-  return fixedRow([]);
-}
-
 function buildStyledAppendPayload(params: {
   toAppend: AttendanceRecord[];
   existingDates: Set<string>;
-  startRow1Based: number;
 }): {
   valueRows: (string | number | boolean)[][];
   rowKinds: AppendRowKind[];
 } {
-  const { toAppend, existingDates, startRow1Based } = params;
+  const { toAppend, existingDates } = params;
   const byDate = new Map<string, AttendanceRecord[]>();
   for (const r of toAppend) {
     const list = byDate.get(r.date) ?? [];
@@ -295,16 +306,17 @@ function buildStyledAppendPayload(params: {
 
   const valueRows: (string | number | boolean)[][] = [];
   const rowKinds: AppendRowKind[] = [];
-  let wroteAnyInThisAppend = false;
 
   const datesInSheet = new Set(existingDates);
 
-  for (const isoDate of sortedDates) {
+  for (let i = 0; i < sortedDates.length; i++) {
+    const isoDate = sortedDates[i];
     const list = byDate.get(isoDate);
     if (!list) continue;
-    const needDayBlock = !datesInSheet.has(isoDate);
-    if (needDayBlock) {
-      if (startRow1Based > 1 || wroteAnyInThisAppend) {
+
+    const isNewDateOnSheet = !datesInSheet.has(isoDate);
+    if (isNewDateOnSheet) {
+      if (valueRows.length > 0) {
         valueRows.push(blankRow());
         rowKinds.push("blank");
       }
@@ -315,11 +327,11 @@ function buildStyledAppendPayload(params: {
       rowKinds.push("header");
       datesInSheet.add(isoDate);
     }
+
     for (const rec of list) {
       valueRows.push(recordToRowForAppend(rec));
       rowKinds.push("data");
     }
-    wroteAnyInThisAppend = true;
   }
 
   return { valueRows, rowKinds };
@@ -349,103 +361,133 @@ function repeatCell(
   };
 }
 
+function rowIndicesByKind(
+  startRow1Based: number,
+  rowKinds: AppendRowKind[]
+): Map<AppendRowKind, number[]> {
+  const byKind = new Map<AppendRowKind, number[]>();
+  for (let i = 0; i < rowKinds.length; i++) {
+    const kind = rowKinds[i];
+    const row0 = startRow1Based - 1 + i;
+    const list = byKind.get(kind) ?? [];
+    list.push(row0);
+    byKind.set(kind, list);
+  }
+  return byKind;
+}
+
+function repeatCellForRowRange(
+  sheetId: number,
+  rowIndices: number[],
+  format: sheets_v4.Schema$CellFormat,
+  fields: string
+): sheets_v4.Schema$Request | null {
+  if (rowIndices.length === 0) return null;
+  const startRow0 = Math.min(...rowIndices);
+  const endRow0Exclusive = Math.max(...rowIndices) + 1;
+  return repeatCell(
+    sheetId,
+    startRow0,
+    endRow0Exclusive,
+    0,
+    SHEET_COL_COUNT,
+    format,
+    fields
+  );
+}
+
+/** Force minute columns to plain numbers (not dates) across the sheet. */
+function numericMinutesColumnFormatRequests(
+  sheetId: number
+): sheets_v4.Schema$Request[] {
+  return MINUTES_COLUMN_INDICES.map((startColumnIndex) => ({
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: 0,
+        endRowIndex: 100000,
+        startColumnIndex,
+        endColumnIndex: startColumnIndex + 1,
+      },
+      cell: {
+        userEnteredFormat: {
+          numberFormat: { type: "NUMBER", pattern: "0" },
+        },
+      },
+      fields: "userEnteredFormat.numberFormat",
+    },
+  }));
+}
+
 function buildFormatRequests(
   sheetId: number,
   startRow1Based: number,
   rowKinds: AppendRowKind[]
-): {
-  mergeRequests: sheets_v4.Schema$Request[];
-  repeatRequests: sheets_v4.Schema$Request[];
-} {
-  const mergeRequests: sheets_v4.Schema$Request[] = [];
+): sheets_v4.Schema$Request[] {
+  const byKind = rowIndicesByKind(startRow1Based, rowKinds);
   const repeatRequests: sheets_v4.Schema$Request[] = [];
 
-  let dataStripeIndex = 0;
+  const blankReq = repeatCellForRowRange(
+    sheetId,
+    byKind.get("blank") ?? [],
+    {
+      backgroundColor: WHITE,
+      horizontalAlignment: "CENTER",
+      textFormat: { foregroundColor: DARK_TEXT },
+    },
+    "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
+  );
+  if (blankReq) repeatRequests.push(blankReq);
 
-  for (let i = 0; i < rowKinds.length; i++) {
-    const kind = rowKinds[i];
-    const row0 = startRow1Based - 1 + i;
+  const dateReq = repeatCellForRowRange(
+    sheetId,
+    byKind.get("date") ?? [],
+    {
+      backgroundColor: NAVY_BG,
+      horizontalAlignment: "CENTER",
+      textFormat: {
+        foregroundColor: WHITE,
+        bold: true,
+        fontSize: 12,
+      },
+    },
+    "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
+  );
+  if (dateReq) repeatRequests.push(dateReq);
 
-    if (kind === "date") {
-      mergeRequests.push({
-        mergeCells: {
-          range: {
-            sheetId,
-            startRowIndex: row0,
-            endRowIndex: row0 + 1,
-            startColumnIndex: 0,
-            endColumnIndex: SHEET_COL_COUNT,
-          },
-          mergeType: "MERGE_ALL",
-        },
-      });
-      repeatRequests.push(
-        repeatCell(
-          sheetId,
-          row0,
-          row0 + 1,
-          0,
-          SHEET_COL_COUNT,
-          {
-            backgroundColor: NAVY_BG,
-            horizontalAlignment: "CENTER",
-            textFormat: {
-              foregroundColor: WHITE,
-              bold: true,
-              fontSize: 12,
-            },
-          },
-          "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
-        )
-      );
-    } else if (kind === "header") {
-      repeatRequests.push(
-        repeatCell(
-          sheetId,
-          row0,
-          row0 + 1,
-          0,
-          SHEET_COL_COUNT,
-          {
-            backgroundColor: HEADER_GRAY_BG,
-            textFormat: {
-              bold: true,
-              fontSize: 11,
-            },
-          },
-          "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat"
-        )
-      );
-    } else if (kind === "data") {
-      const bg = dataStripeIndex % 2 === 0 ? WHITE : DATA_ALT_BG;
-      dataStripeIndex++;
-      repeatRequests.push(
-        repeatCell(
-          sheetId,
-          row0,
-          row0 + 1,
-          0,
-          SHEET_COL_COUNT,
-          { backgroundColor: bg, textFormat: { bold: false, fontSize: 10 } },
-          "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.textFormat.fontSize"
-        )
-      );
-    } else {
-      repeatRequests.push(
-        repeatCell(
-          sheetId,
-          row0,
-          row0 + 1,
-          0,
-          SHEET_COL_COUNT,
-          { backgroundColor: WHITE },
-          "userEnteredFormat.backgroundColor"
-        )
-      );
-    }
-  }
+  const headerReq = repeatCellForRowRange(
+    sheetId,
+    byKind.get("header") ?? [],
+    {
+      backgroundColor: HEADER_GRAY_BG,
+      horizontalAlignment: "CENTER",
+      textFormat: {
+        bold: true,
+        fontSize: 11,
+        foregroundColor: DARK_TEXT,
+      },
+    },
+    "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
+  );
+  if (headerReq) repeatRequests.push(headerReq);
 
-  return { mergeRequests, repeatRequests };
+  const dataReq = repeatCellForRowRange(
+    sheetId,
+    byKind.get("data") ?? [],
+    {
+      backgroundColor: WHITE,
+      horizontalAlignment: "CENTER",
+      textFormat: {
+        bold: false,
+        fontSize: 10,
+        foregroundColor: DARK_TEXT,
+      },
+    },
+    "userEnteredFormat.backgroundColor,userEnteredFormat.horizontalAlignment,userEnteredFormat.textFormat"
+  );
+  if (dataReq) repeatRequests.push(dataReq);
+
+  return repeatRequests;
 }
 
 /** Normalize grid range for batch ops (sheetId required for unmerge). */
@@ -478,29 +520,6 @@ async function unmergeAllMergedRegions(
   });
 }
 
-/** Unmerge any merged regions overlapping the rows we are about to overwrite (avoids values landing in wrong columns). */
-function unmergeRequestsForRowBand(
-  sheetId: number,
-  merges: sheets_v4.Schema$GridRange[] | undefined,
-  startRow0: number,
-  endRow0Exclusive: number
-): sheets_v4.Schema$Request[] {
-  if (!merges?.length) return [];
-  const out: sheets_v4.Schema$Request[] = [];
-  for (const m of merges) {
-    const sid = m.sheetId ?? sheetId;
-    if (sid !== sheetId) continue;
-    const r0 = m.startRowIndex ?? 0;
-    const r1 = m.endRowIndex ?? 0;
-    if (r0 < endRow0Exclusive && r1 > startRow0) {
-      out.push({
-        unmergeCells: { range: withSheetId(m, sheetId) },
-      });
-    }
-  }
-  return out;
-}
-
 export async function appendRecords(
   companyId: string,
   records: AttendanceRecord[],
@@ -517,13 +536,14 @@ export async function appendRecords(
   const toAppend: AttendanceRecord[] = [];
   let skipped = 0;
   for (const r of records) {
-    const k = `${r.employeeId}|${r.date}`;
+    const dateIso = normalizeToISO(r.date);
+    const k = `${r.employeeId}|${dateIso}`;
     if (keys.has(k)) {
       skipped++;
       continue;
     }
     keys.add(k);
-    toAppend.push(r);
+    toAppend.push(dateIso === r.date ? r : { ...r, date: dateIso });
   }
   if (toAppend.length === 0) {
     return { inserted: 0, skipped, records: [] };
@@ -533,56 +553,67 @@ export async function appendRecords(
   const spreadsheetId = getSpreadsheetId(companyId);
   const sheetId = await getSheet1Id(spreadsheetId);
 
-  const valueMatrix = await getAllValueRows(companyId);
-  const startRow1Based = valueMatrix.length + 1;
+  const gridRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: sheetGridRange(),
+  });
+  const rawRows = gridRes.data.values ?? [];
+  const lastNonEmptyRow = rawRows.reduce((last, row, idx) => {
+    const hasContent = (row as unknown[]).some((c) => String(c ?? "").trim() !== "");
+    return hasContent ? idx + 1 : last;
+  }, 0);
+  const startRow1Based = lastNonEmptyRow + 1;
 
   const { valueRows, rowKinds } = buildStyledAppendPayload({
     toAppend,
     existingDates: dates,
-    startRow1Based,
   });
 
-  const rowCount = valueRows.length;
-  const startRow0 = startRow1Based - 1;
-  const endRow0Exclusive = startRow0 + rowCount;
-
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: "sheets(properties.sheetId,properties.title,merges)",
+  valueRows.forEach((row, idx) => {
+    if (
+      rowKinds[idx] === "data" &&
+      !row.some((c) => String(c ?? "").trim() !== "")
+    ) {
+      console.log(
+        "BLANK DATA ROW at index:",
+        idx,
+        "prev:",
+        valueRows[idx - 1]?.[0],
+        "next:",
+        valueRows[idx + 1]?.[0]
+      );
+    }
   });
-  const sheet = meta.data.sheets?.find((s) => s.properties?.sheetId === sheetId);
-  const unmerges = unmergeRequestsForRowBand(
-    sheetId,
-    sheet?.merges as sheets_v4.Schema$GridRange[] | undefined,
-    startRow0,
-    endRow0Exclusive
-  );
-  if (unmerges.length > 0) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: { requests: unmerges },
-    });
-  }
+
+  const safeValueRows = valueRows.filter((row, idx) => {
+    if (rowKinds[idx] !== "data") return true;
+    return row.some((cell) => String(cell ?? "").trim() !== "");
+  });
+  const safeRowKinds = rowKinds.filter((_, idx) => {
+    if (rowKinds[idx] !== "data") return true;
+    return valueRows[idx].some((cell) => String(cell ?? "").trim() !== "");
+  });
+
+  const rowCount = safeValueRows.length;
 
   const range = sheetRowRange(startRow1Based, rowCount);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: valueRows },
+    valueInputOption: "RAW",
+    requestBody: { values: safeValueRows },
   });
 
-  const { mergeRequests, repeatRequests } = buildFormatRequests(
-    sheetId,
-    startRow1Based,
-    rowKinds
-  );
+  const formatRequests = [
+    ...buildFormatRequests(sheetId, startRow1Based, safeRowKinds),
+    ...numericMinutesColumnFormatRequests(sheetId),
+  ];
 
-  if (mergeRequests.length > 0 || repeatRequests.length > 0) {
+  if (formatRequests.length > 0) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: {
-        requests: [...mergeRequests, ...repeatRequests],
+        requests: formatRequests,
       },
     });
   }
@@ -619,6 +650,26 @@ export async function clearAllDataRowsAfterHeader(companyId: string): Promise<nu
   });
 
   await unmergeAllMergedRegions(spreadsheetId, sheetId);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          updateSheetProperties: {
+            properties: {
+              sheetId,
+              gridProperties: {
+                frozenColumnCount: 2,
+              },
+            },
+            fields: "gridProperties.frozenColumnCount",
+          },
+        },
+        ...numericMinutesColumnFormatRequests(sheetId),
+      ],
+    },
+  });
 
   return cleared;
 }

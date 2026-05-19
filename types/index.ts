@@ -1,3 +1,13 @@
+export type MissedPunch = {
+  employeeId: string;
+  employeeName: string;
+  department: string;
+  date: string;
+  type: "missing-out" | "missing-in";
+  /** The punch time that exists (check-in or check-out). */
+  time: string;
+};
+
 export type AttendanceRecord = {
   employeeId: string;
   employeeName: string;

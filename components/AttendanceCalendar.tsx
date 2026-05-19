@@ -26,8 +26,7 @@ function mondayBasedWeekday(d: Date): number {
 
 export type DayKind =
   | "weekend"
-  | "holiday-public"
-  | "holiday-company"
+  | "holiday"
   | "empty"
   | "green"
   | "amber"
@@ -43,8 +42,7 @@ function classifyCell(
 ): DayKind {
   if (!inMonth) return "outMonth";
   if (isWeekend) return "weekend";
-  const holiday = holidayMap.get(iso);
-  if (holiday) return holiday.type === "public" ? "holiday-public" : "holiday-company";
+  if (holidayMap.has(iso)) return "holiday";
   if (!record || recordIsNoData(record)) return "empty";
   if (isLongWorkDay(record)) return "blue";
   if (record.isEarlyExit) return "red";
@@ -56,10 +54,8 @@ function cellStyles(kind: DayKind): string {
   switch (kind) {
     case "weekend":
       return "bg-[#f1f5f9] dark:bg-slate-700/90";
-    case "holiday-public":
-        return "bg-[#e9d5ff] dark:bg-purple-950/50 dark:ring-1 dark:ring-purple-800/60";
-    case "holiday-company":
-        return "bg-[#fed7aa] dark:bg-orange-950/50 dark:ring-1 dark:ring-orange-800/60";  
+    case "holiday":
+      return "bg-[#e9d5ff] dark:bg-purple-950/50 dark:ring-1 dark:ring-purple-800/60";
     case "empty":
       return "border-2 border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900";
     case "green":
@@ -83,8 +79,8 @@ function dotClass(kind: DayKind): string {
     case "amber":   return "bg-amber-600 dark:bg-amber-300";
     case "red":     return "bg-red-600 dark:bg-red-400";
     case "blue":    return "bg-blue-600 dark:bg-blue-400";
-    case "holiday-public": return "bg-purple-600 dark:bg-purple-400";
-    case "holiday-company": return "bg-orange-600 dark:bg-orange-400";
+    case "holiday":
+      return "bg-purple-600 dark:bg-purple-400";
     case "empty":   return "bg-slate-400 dark:bg-slate-500";
     case "weekend": return "bg-slate-400/70 dark:bg-slate-500";
     default:        return "bg-transparent";
@@ -202,14 +198,10 @@ export function AttendanceCalendar({ employeeRecords, yearMonth, onYearMonthChan
                 {c.dayNum}
               </span>
               
-            {(c.kind === "holiday-public" || c.kind === "holiday-company") && c.holiday && (
-              <span className={`mt-0.5 text-center text-[8px] leading-tight line-clamp-2 ${
-                c.kind === "holiday-public"
-                   ? "text-purple-700 dark:text-purple-300"
-                   : "text-orange-700 dark:text-orange-300"
-              }`}>
-                 {c.holiday.name}
-               </span>
+            {c.kind === "holiday" && c.holiday && (
+              <span className="mt-0.5 text-center text-[8px] leading-tight text-purple-700 line-clamp-2 dark:text-purple-300">
+                {c.holiday.name}
+              </span>
             )}
               {c.kind !== "outMonth" && (
                 <span className={`mt-auto mb-0.5 h-1.5 w-1.5 rounded-full ${dotClass(c.kind)}`} aria-hidden />
@@ -227,8 +219,7 @@ export function AttendanceCalendar({ employeeRecords, yearMonth, onYearMonthChan
           { color: "bg-[#bfdbfe] dark:bg-blue-950/45", label: "Overtime" },
           { color: "bg-[#f1f5f9] dark:bg-slate-700/90", label: "Sunday" },
           { color: "border-2 border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900", label: "Absent" },
-          { color: "bg-[#e9d5ff] dark:bg-purple-950/50", label: "Public Holiday" },
-          { color: "bg-[#fed7aa] dark:bg-orange-950/50", label: "Company Holiday" },
+          { color: "bg-[#e9d5ff] dark:bg-purple-950/50", label: "Holiday" },
         ].map(({ color, label }) => (
           <div key={label} className="flex items-center gap-1.5">
             <span className={`h-3 w-3 rounded-sm flex-shrink-0 ${color}`} />

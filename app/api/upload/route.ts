@@ -30,13 +30,14 @@ export async function POST(request: NextRequest) {
       );
     }
     const buffer = Buffer.from(await file.arrayBuffer());
-    const records = processAttendanceFromBuffer(buffer);
+    const { records, missedPunches } = processAttendanceFromBuffer(buffer);
     const { keys, dates } = await fetchExistingKeysAndDates(companyId);
     const result = await appendRecords(companyId, records, keys, dates);
     return NextResponse.json({
       inserted: result.inserted,
       skipped: result.skipped,
       records: result.records,
+      missedPunches,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Upload failed";

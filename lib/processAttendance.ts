@@ -1,9 +1,10 @@
 import * as XLSX from "xlsx";
-import type { AttendanceRecord } from "@/types";
+import type { AttendanceRecord, MissedPunch } from "@/types";
 import {
   WORK_END_MINS,
   WORK_START_MINS,
 } from "@/lib/attendanceConstants";
+import { normalizeToISO } from "@/lib/formatDisplay";
 
 const LATE_THRESHOLD_MINS = WORK_START_MINS; // 09:05
 
@@ -30,7 +31,9 @@ function normalizeHeader(h: unknown): string | null {
 
 /** Date column: Excel serial, DD-MM-YYYY, DD/MM/YYYY, or passthrough string → ISO `YYYY-MM-DD` when recognized. */
 export function parseDate(raw: unknown): string {
-  if (raw === null || raw === undefined || raw === "") return "";
+  if (raw === null || raw === undefined || raw === "") {
+    return normalizeToISO("");
+  }
   if (typeof raw === "number" && Number.isFinite(raw)) {
     const n = Math.floor(raw);
     if (n === raw && n > 0 && n < 10000000) {
@@ -39,7 +42,7 @@ export function parseDate(raw: unknown): string {
         const d = String(date.getUTCDate()).padStart(2, "0");
         const m = String(date.getUTCMonth() + 1).padStart(2, "0");
         const y = date.getUTCFullYear();
-        return `${y}-${m}-${d}`;
+        return normalizeToISO(`${y}-${m}-${d}`);
       }
     }
   }
@@ -50,20 +53,20 @@ export function parseDate(raw: unknown): string {
     const d = String(date.getUTCDate()).padStart(2, "0");
     const m = String(date.getUTCMonth() + 1).padStart(2, "0");
     const y = date.getUTCFullYear();
-    return `${y}-${m}-${d}`;
+    return normalizeToISO(`${y}-${m}-${d}`);
   }
 
   if (/^\d{2}-\d{2}-\d{4}$/.test(str)) {
     const [d, m, y] = str.split("-");
-    return `${y}-${m}-${d}`;
+    return normalizeToISO(`${y}-${m}-${d}`);
   }
 
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
     const [d, m, y] = str.split("/");
-    return `${y}-${m}-${d}`;
+    return normalizeToISO(`${y}-${m}-${d}`);
   }
 
-  return str;
+  return normalizeToISO(str);
 }
 
 function parseDateCell(v: unknown): string | null {
@@ -203,13 +206,18 @@ function getInOut(row: RowMap): "in" | "out" | null {
   return null;
 }
 
+export type ProcessAttendanceResult = {
+  records: AttendanceRecord[];
+  missedPunches: MissedPunch[];
+};
+
 /** Parse uploaded xlsx buffer → processed attendance records (pairs only). */
-export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] {
+export function processAttendanceFromBuffer(buffer: Buffer): ProcessAttendanceResult {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  if (!sheet) return [];
+  if (!sheet) return { records: [], missedPunches: [] };
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-  if (rows.length < 4) return [];
+  if (rows.length < 4) return { records: [], missedPunches: [] };
 
   const headerRow = rows[2] as unknown[];
   const headerKeys: string[] = [];
@@ -220,7 +228,7 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
 
   const idIdx = headerKeys.indexOf("employeeId");
   const dateIdx = headerKeys.indexOf("date");
-  if (idIdx < 0 || dateIdx < 0) return [];
+  if (idIdx < 0 || dateIdx < 0) return { records: [], missedPunches: [] };
 
   type Punch = {
     row: RowMap;
@@ -254,18 +262,43 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
   }
 
   const records: AttendanceRecord[] = [];
+  const missedPunches: MissedPunch[] = [];
 
   for (const g of groups.values()) {
     const ins = g.punches.filter((p) => getInOut(p.row) === "in");
     const outs = g.punches.filter((p) => getInOut(p.row) === "out");
-    if (!ins.length || !outs.length) continue;
+    const meta = g.meta;
+    const dateIso =
+      typeof meta.date === "string" ? meta.date : parseDateCell(meta.date) ?? "";
+
+    if (!ins.length || !outs.length) {
+      if (ins.length && !outs.length) {
+        missedPunches.push({
+          employeeId: String(meta.employeeId ?? "").trim(),
+          employeeName: String(meta.employeeName ?? "").trim(),
+          department: String(meta.department ?? "").trim(),
+          date: dateIso,
+          type: "missing-out",
+          time: formatTime(Math.min(...ins.map((p) => p.mins))),
+        });
+      } else if (outs.length && !ins.length) {
+        missedPunches.push({
+          employeeId: String(meta.employeeId ?? "").trim(),
+          employeeName: String(meta.employeeName ?? "").trim(),
+          department: String(meta.department ?? "").trim(),
+          date: dateIso,
+          type: "missing-in",
+          time: formatTime(Math.max(...outs.map((p) => p.mins))),
+        });
+      }
+      continue;
+    }
 
     const inMins = Math.min(...ins.map((p) => p.mins));
     const outMins = Math.max(...outs.map((p) => p.mins));
     if (outMins <= inMins) continue;
 
     const durationMins = outMins - inMins;
-    const meta = g.meta;
     const checkInStr = formatTime(inMins);
     const checkOutStr = formatTime(outMins);
     const totalHours = Math.round((durationMins / 60) * 100) / 100;
@@ -305,5 +338,10 @@ export function processAttendanceFromBuffer(buffer: Buffer): AttendanceRecord[] 
     return a.employeeId.localeCompare(b.employeeId);
   });
 
-  return records;
+  missedPunches.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.employeeName.localeCompare(b.employeeName);
+  });
+
+  return { records, missedPunches };
 }

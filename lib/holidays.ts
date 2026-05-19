@@ -1,33 +1,34 @@
 export type Holiday = {
   date: string;
   name: string;
-  type: "public" | "company";
 };
 
-export const HOLIDAYS_2026: Holiday[] = [
-  // Public holidays
-  { date: "2026-01-26", name: "Republic Day", type: "public" },
-  { date: "2026-04-02", name: "Pesaga Day", type: "public" },
-  { date: "2026-04-03", name: "Good Friday", type: "public" },
-  { date: "2026-05-01", name: "May Day", type: "public" },
-  { date: "2026-08-15", name: "Independence Day", type: "public" },
-  { date: "2026-08-26", name: "Onam", type: "public" },
-  { date: "2026-08-27", name: "Onam", type: "public" },
-  { date: "2026-10-02", name: "Gandhi Jayanthi", type: "public" },
-  { date: "2026-12-25", name: "Christmas", type: "public" },
+const FIXED_HOLIDAYS = [
+  { month: 1, day: 26, name: "Republic Day" },
+  { month: 5, day: 1, name: "May Day" },
+  { month: 8, day: 15, name: "Independence Day" },
+  { month: 10, day: 2, name: "Gandhi Jayanthi" },
+  { month: 12, day: 25, name: "Christmas" },
+] as const;
 
-  // Company holidays
-  { date: "2026-04-04", name: "Company Tour – Munnar", type: "company" },
-  { date: "2026-04-15", name: "Vishu", type: "company" },
-  { date: "2026-05-08", name: "Company Day with Family", type: "company" },
-  { date: "2026-08-25", name: "Onam Celebration", type: "company" },
-  { date: "2026-10-21", name: "Pooja Holiday", type: "company" },
-  { date: "2026-12-24", name: "Christmas Celebration", type: "company" },
-  { date: "2026-12-26", name: "Christmas Holiday", type: "company" },
-];
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function generateHolidaysForYear(year: number): Holiday[] {
+  return FIXED_HOLIDAYS.map((h) => ({
+    date: `${year}-${pad(h.month)}-${pad(h.day)}`,
+    name: h.name,
+  }));
+}
 
 export function getHolidayMap(): Map<string, Holiday> {
+  const currentYear = new Date().getFullYear();
   const map = new Map<string, Holiday>();
-  for (const h of HOLIDAYS_2026) map.set(h.date, h);
+  for (const year of [currentYear - 1, currentYear, currentYear + 1]) {
+    for (const h of generateHolidaysForYear(year)) {
+      map.set(h.date, h);
+    }
+  }
   return map;
 }
